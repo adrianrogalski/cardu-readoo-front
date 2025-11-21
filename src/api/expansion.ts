@@ -1,3 +1,5 @@
+import { apiUrl } from './config'
+
 export interface ExpansionResponse {
   externalId: string
   name: string
@@ -12,7 +14,7 @@ export interface PatchExpansionRequest {
   name: string
 }
 
-const BASE_URL = '/api/expansions'
+const BASE_URL = apiUrl('/api/expansions')
 
 export async function fetchAllExpansions(): Promise<ExpansionResponse[]> {
   const response = await fetch(BASE_URL, {

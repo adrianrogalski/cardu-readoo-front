@@ -1,3 +1,5 @@
+import { apiUrl } from './config'
+
 export interface OfferPointResponse {
   id: number
   listedAt: string
@@ -21,7 +23,7 @@ export interface PatchOfferRequest {
   listedAt?: string | null
 }
 
-const BASE_URL = '/api/offers'
+const BASE_URL = apiUrl('/api/offers')
 
 export async function fetchOffersByCardName(
   expExternalId: string,

@@ -1,3 +1,5 @@
+import { apiUrl } from './config'
+
 export interface CardResponse {
   expExternalId: string
   cardNumber: string
@@ -17,7 +19,7 @@ export interface PatchCardRequest {
   rarity?: string | null
 }
 
-const BASE_URL = '/api/cards'
+const BASE_URL = apiUrl('/api/cards')
 
 export async function fetchCardsByExpansionName(
   expansionName: string,
@@ -77,7 +79,7 @@ export async function patchCard(expExternalId: string, cardNumber: string, paylo
 }
 
 export async function deleteCardByNumber(expExternalId: string, cardNumber: string): Promise<void> {
-  const url = new URL('/api/cards/by-number', window.location.origin)
+  const url = new URL(`${BASE_URL}/by-number`, window.location.origin)
   url.searchParams.set('expansion', expExternalId)
   url.searchParams.set('number', cardNumber)
 
