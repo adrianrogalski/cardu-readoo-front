@@ -17,7 +17,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'https://cardu-readoo-app.politeriver-f78bbbbd.westeurope.azurecontainerapps.io',
         changeOrigin: true,
       },
     },
