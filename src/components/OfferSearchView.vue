@@ -29,7 +29,6 @@ const offers = ref<OfferPointResponse[]>([])
 
 const hasSearched = ref(false)
 
-// nowe pola dat
 const fromDate = ref<string | null>(null)
 const toDate = ref<string | null>(null)
 
@@ -154,6 +153,12 @@ async function handleAddOffer() {
     return
   }
 
+  // ograniczenie do maksymalnie 2 miejsc po przecinku
+  if (/\.(\d{3,})$/.test(normalizedAmount)) {
+    addOfferError.value = 'Price can have at most 2 decimal places'
+    return
+  }
+
   if (!newOfferCurrency.value.trim()) {
     addOfferError.value = 'Provide currency (3-letter code, e.g. PLN)'
     return
@@ -215,6 +220,12 @@ async function handleSaveOffer(offer: OfferPointResponse) {
 
   if (!normalizedAmount || Number.isNaN(amountNum) || amountNum <= 0) {
     editOfferError.value = 'Provide valid positive price'
+    return
+  }
+
+  // ograniczenie do maksymalnie 2 miejsc po przecinku przy edycji
+  if (/\.(\d{3,})$/.test(normalizedAmount)) {
+    editOfferError.value = 'Price can have at most 2 decimal places'
     return
   }
 
@@ -763,16 +774,17 @@ function formatOfferDate(iso: string): string {
             class="odd:bg-white even:bg-slate-50"
           >
             <td class="px-3 py-2 border-b border-slate-100 font-mono">{{ formatOfferDate(offer.listedAt) }}</td>
-            <td class="px-3 py-2 border-b border-slate-100 font-mono">
+            <td class="px-3 py-2 border-b border-slate-100 text-right">
               <template v-if="isAdmin && editingOfferId === offer.id">
                 <input
                   v-model="editOfferAmount"
                   type="text"
-                  class="w-full rounded border border-slate-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  class="w-24 rounded border border-slate-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  @keyup.enter="handleSaveOffer(offer)"
                 />
               </template>
               <template v-else>
-                {{ offer.amount }}
+                <span class="font-mono">{{ offer.amount.toFixed(2) }}</span>
               </template>
             </td>
             <td class="px-3 py-2 border-b border-slate-100">
@@ -843,7 +855,7 @@ function formatOfferDate(iso: string): string {
         class="mt-3 flex flex-col gap-2 max-w-md"
       >
         <div class="flex flex-col gap-1">
-          <label for="newOfferAmount" class="text-xs font-medium text-slate-700">Amount</label>
+          <label for="newOfferAmount" class="text-xs font-medium text-slate-700">Price</label>
           <input
             id="newOfferAmount"
             v-model="newOfferAmount"
@@ -851,7 +863,6 @@ function formatOfferDate(iso: string): string {
             class="w-full rounded border border-slate-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
         </div>
-
         <div class="flex flex-col gap-1">
           <label for="newOfferCurrency" class="text-xs font-medium text-slate-700">Currency</label>
           <input
@@ -859,7 +870,7 @@ function formatOfferDate(iso: string): string {
             v-model="newOfferCurrency"
             type="text"
             class="w-full rounded border border-slate-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            placeholder="np. PLN"
+            @keyup.enter="handleAddOffer"
           />
         </div>
 

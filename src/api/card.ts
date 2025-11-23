@@ -20,7 +20,7 @@ export interface PatchCardRequest {
   rarity?: string | null
 }
 
-const BASE_URL = apiUrl('/api/cards')
+const CARDS_COLLECTION_URL = apiUrl('/api/cards')
 
 export async function fetchCardsByExpansionName(
   expansionName: string,
@@ -28,7 +28,8 @@ export async function fetchCardsByExpansionName(
   size = 50,
 ): Promise<CardResponse[]> {
   const auth = useAuthStore()
-  const url = new URL(`${BASE_URL}/by-expansion-name`, window.location.origin)
+
+  const url = new URL(CARDS_COLLECTION_URL, window.location.origin)
   url.searchParams.set('expansionName', expansionName)
   url.searchParams.set('page', String(page))
   url.searchParams.set('size', String(size))
@@ -50,14 +51,23 @@ export async function fetchCardsByExpansionName(
 
 export async function upsertCard(payload: UpsertCardRequest): Promise<void> {
   const auth = useAuthStore()
-  const response = await fetch(BASE_URL, {
+
+  // POST /api/expansions/{expExternalId}/cards
+  const url = apiUrl(`/api/expansions/${encodeURIComponent(payload.expExternalId)}/cards`)
+
+  const response = await fetch(url, {
     method: 'POST',
     headers: {
       ...auth.authHeaders(),
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      expExternalId: payload.expExternalId,
+      cardNumber: payload.cardNumber,
+      cardName: payload.cardName,
+      cardRarity: payload.cardRarity,
+    }),
   })
 
   if (!response.ok) {
@@ -67,10 +77,11 @@ export async function upsertCard(payload: UpsertCardRequest): Promise<void> {
 
 export async function patchCard(expExternalId: string, cardNumber: string, payload: PatchCardRequest): Promise<void> {
   const auth = useAuthStore()
-  const url = new URL(`${BASE_URL}/${encodeURIComponent(cardNumber)}`, window.location.origin)
-  url.searchParams.set('expExternalId', expExternalId)
 
-  const response = await fetch(url.toString(), {
+  // PATCH /api/expansions/{expExternalId}/cards/{cardNumber}
+  const url = apiUrl(`/api/expansions/${encodeURIComponent(expExternalId)}/cards/${encodeURIComponent(cardNumber)}`)
+
+  const response = await fetch(url, {
     method: 'PATCH',
     headers: {
       ...auth.authHeaders(),
@@ -87,11 +98,11 @@ export async function patchCard(expExternalId: string, cardNumber: string, paylo
 
 export async function deleteCardByNumber(expExternalId: string, cardNumber: string): Promise<void> {
   const auth = useAuthStore()
-  const url = new URL(`${BASE_URL}/by-number`, window.location.origin)
-  url.searchParams.set('expansion', expExternalId)
-  url.searchParams.set('number', cardNumber)
 
-  const response = await fetch(url.toString(), {
+  // DELETE /api/expansions/{expExternalId}/cards/{cardNumber}
+  const url = apiUrl(`/api/expansions/${encodeURIComponent(expExternalId)}/cards/${encodeURIComponent(cardNumber)}`)
+
+  const response = await fetch(url, {
     method: 'DELETE',
     headers: {
       ...auth.authHeaders(),

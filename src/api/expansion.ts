@@ -72,7 +72,7 @@ export async function patchExpansion(externalId: string, payload: PatchExpansion
 
 export async function deleteExpansionByName(name: string): Promise<void> {
   const auth = useAuthStore()
-  const url = `${BASE_URL}/by-name/${encodeURIComponent(name)}`
+  const url = `${BASE_URL}/${encodeURIComponent(name)}` // bez /by-name
 
   const response = await fetch(url, {
     method: 'DELETE',

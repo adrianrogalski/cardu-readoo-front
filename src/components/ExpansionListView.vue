@@ -190,6 +190,7 @@ export default defineComponent({
                   v-model="editName"
                   type="text"
                   class="w-full rounded border border-slate-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  @keyup.enter="handleSaveEdit(exp.externalId)"
                 />
               </template>
               <template v-else>
@@ -272,6 +273,7 @@ export default defineComponent({
               v-model="newName"
               type="text"
               class="w-full rounded border border-slate-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              @keyup.enter="handleAddExpansion"
             />
           </div>
 
