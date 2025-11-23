@@ -10,6 +10,12 @@ COPY package*.json ./
 # Instalacja zależności
 RUN npm install
 
+# 1) build-arg z adresem backendu
+ENV VITE_API_BASE_URL=https://cardu-readoo-app.politeriver-f78bbbbd.westeurope.azurecontainerapps.io
+
+# 2) DEBUG – wypisz wartość env w czasie builda
+RUN echo ">>> BUILD: VITE_API_BASE_URL=${VITE_API_BASE_URL}"
+
 # Skopiuj resztę projektu
 COPY . .
 
