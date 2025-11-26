@@ -6,6 +6,7 @@ export interface OfferPointResponse {
   listedAt: string
   amount: number
   currency: string
+  cardName?: string
 }
 
 export interface AddOfferRequest {

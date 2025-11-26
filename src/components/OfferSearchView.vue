@@ -11,6 +11,10 @@ import { useAuthStore } from '@/stores/auth'
 const auth = useAuthStore()
 const isAdmin = computed(() => auth.user?.roles.includes('ROLE_ADMIN'))
 
+// flaga sterująca widocznością akcji admina dla ofert
+// domyślnie true dla wygody, ale będzie wyłączana przy dodawaniu kolejnych serii
+const showAdminOfferActions = ref(true)
+
 const expansions = ref<ExpansionResponse[]>([])
 const isLoadingExpansions = ref(false)
 const loadExpansionsError = ref<string | null>(null)
@@ -25,7 +29,38 @@ const loadCardsError = ref<string | null>(null)
 
 const isLoadingOffers = ref(false)
 const offersError = ref<string | null>(null)
-const offers = ref<OfferPointResponse[]>([])
+
+// WIELE SERII OFERT
+interface OfferSeries {
+  id: number
+  card: CardResponse
+  offers: OfferPointResponse[]
+  lineColor: string
+  pointColor: string
+  label: string // np. "Dark Ritual_1"
+}
+
+const series = ref<OfferSeries[]>([])
+const nextSeriesId = ref(1)
+
+// zflattenowane oferty z informacją o serii
+const allOffers = computed(
+  () =>
+    series.value.flatMap((s) =>
+      s.offers.map((o) => ({
+        ...o,
+        _seriesId: s.id,
+        _seriesLabel: s.label,
+        _seriesLineColor: s.lineColor,
+        _seriesPointColor: s.pointColor,
+      })),
+    ) as (OfferPointResponse & {
+      _seriesId: number
+      _seriesLabel: string
+      _seriesLineColor: string
+      _seriesPointColor: string
+    })[],
+)
 
 // zaznaczenie wybranej oferty (wiersz + punkt na wykresie)
 const selectedOfferId = ref<number | null>(null)
@@ -35,6 +70,7 @@ const hasSearched = ref(false)
 const fromDate = ref<string | null>(null)
 const toDate = ref<string | null>(null)
 
+// konfiguracja wykresu liniowego
 const lineColor = ref<string>('#2563eb')
 const pointColor = ref<string>('#1d4ed8')
 const axisLabelColor = ref<string>('#475569')
@@ -45,7 +81,29 @@ const yAxisLabel = ref<string>('Price')
 
 const isChartConfigVisible = ref(false)
 
+// konfiguracja wykresu słupkowego
+const barColor = ref<string>('#22c55e')
+const barAxisLabelColor = ref<string>('#475569')
+const barChartTitle = ref<string>('Offers count per card')
+const barXAxisLabel = ref<string>('Card name')
+const barYAxisLabel = ref<string>('Number of offers')
+const isBarChartConfigVisible = ref(false)
+
 const canSubmit = computed(() => !!selectedExpansionName.value && !!selectedCardName.value)
+
+// pomocnicze kolory dla kolejnych serii (domyślne wartości startowe)
+const baseLineColors = ['#2563eb', '#22c55e', '#f97316', '#ec4899', '#a855f7'] as const
+const basePointColors = ['#1d4ed8', '#16a34a', '#ea580c', '#db2777', '#7c3aed'] as const
+
+function pickSeriesLineColor(id: number): string {
+  const idx = (id - 1) % baseLineColors.length
+  return baseLineColors[idx] ?? '#2563eb'
+}
+
+function pickSeriesPointColor(id: number): string {
+  const idx = (id - 1) % basePointColors.length
+  return basePointColors[idx] ?? '#1d4ed8'
+}
 
 async function loadExpansions() {
   isLoadingExpansions.value = true
@@ -74,11 +132,11 @@ async function loadCardsForExpansion(name: string) {
   }
 }
 
-async function handleSubmit() {
+async function handleAddSeries() {
   submitError.value = null
   offersError.value = null
 
-  if (!canSubmit.value || !selectedExpansionName.value || !selectedCardName.value) {
+  if (!selectedExpansionName.value || !selectedCardName.value) {
     submitError.value = 'Select expansion and card name'
     return
   }
@@ -89,20 +147,55 @@ async function handleSubmit() {
     return
   }
 
-  isLoadingOffers.value = true
-  offers.value = []
-  hasSearched.value = true
+  // nie dodawaj serii, jeżeli już istnieje dla tej karty w tym samym zakresie
+  const alreadyExists = series.value.some((s) => s.card.cardName === card.cardName)
+  if (alreadyExists) {
+    submitError.value = 'Series for this card is already added'
+    return
+  }
 
   const fromIso = fromDate.value ? new Date(fromDate.value + 'T00:00:00Z').toISOString() : undefined
   const toIso = toDate.value ? new Date(toDate.value + 'T23:59:59Z').toISOString() : undefined
 
+  isLoadingOffers.value = true
   try {
-    offers.value = await fetchOffersByCardName(card.expExternalId, card.cardName, fromIso, toIso)
+    const fetched = await fetchOffersByCardName(card.expExternalId, card.cardName, fromIso, toIso)
+
+    const id = nextSeriesId.value++
+    const label = card.cardName
+
+    // domyślne kolory serii bazujące na kolejności
+    const defaultLineColor = pickSeriesLineColor(id)
+    const defaultPointColor = pickSeriesPointColor(id)
+
+    series.value.push({
+      id,
+      card,
+      offers: fetched.map((o) => ({ ...o, cardName: card.cardName })),
+      lineColor: defaultLineColor,
+      pointColor: defaultPointColor,
+      label,
+    })
+
+    // jeżeli po dodaniu mamy więcej niż jedną serię, ukrywamy akcje admina
+    showAdminOfferActions.value = series.value.length <= 1
+
+    hasSearched.value = true
   } catch {
-    offersError.value = 'Failed to load offers for selected card'
+    offersError.value = 'Failed to load offers for this series'
   } finally {
     isLoadingOffers.value = false
   }
+}
+
+async function handleSubmit() {
+  // nowe wyszukiwanie – kasujemy poprzednie serie i dodajemy pierwszą
+  series.value = []
+  nextSeriesId.value = 1
+  selectedOfferId.value = null
+  // przy nowym wyszukiwaniu ponownie pozwalamy na akcje admina, bo będzie pojedyncza seria
+  showAdminOfferActions.value = true
+  await handleAddSeries()
 }
 
 watch(selectedExpansionName, (newName) => {
@@ -112,11 +205,16 @@ watch(selectedExpansionName, (newName) => {
     cards.value = []
     selectedCardName.value = null
   }
-  offers.value = []
+  // reset wyników
+  series.value = []
+  nextSeriesId.value = 1
+  selectedOfferId.value = null
   offersError.value = null
   hasSearched.value = false
   isAddOfferVisible.value = false
   resetAddOfferForm()
+  // przy zmianie ekspansji również resetujemy widoczność akcji admina
+  showAdminOfferActions.value = true
 })
 
 onMounted(() => {
@@ -125,13 +223,13 @@ onMounted(() => {
 
 const isAddOfferVisible = ref(false)
 const newOfferAmount = ref('')
-const newOfferCurrency = ref('')
+const newOfferCurrency = ref('PLN')
 const addOfferError = ref<string | null>(null)
 const isSavingOffer = ref(false)
 
 function resetAddOfferForm() {
   newOfferAmount.value = ''
-  newOfferCurrency.value = ''
+  newOfferCurrency.value = 'PLN'
   addOfferError.value = null
 }
 
@@ -162,16 +260,8 @@ async function handleAddOffer() {
     return
   }
 
-  if (!newOfferCurrency.value.trim()) {
-    addOfferError.value = 'Provide currency (3-letter code, e.g. PLN)'
-    return
-  }
-
-  const currency = newOfferCurrency.value.trim().toUpperCase()
-  if (!/^[A-Z]{3}$/.test(currency)) {
-    addOfferError.value = 'Currency must be a 3-letter ISO code (e.g. PLN, USD)'
-    return
-  }
+  // wymuszamy PLN jako jedyną wspieraną walutę
+  const currency = 'PLN'
 
   const nowIso = new Date().toISOString()
 
@@ -270,21 +360,19 @@ const chartHeight = 230
 const chartPaddingX = 40
 const chartPaddingY = 24
 
-const offerPoints = computed(() =>
-  offers.value
+// domena czasu/ceny dla WSZYSTKICH serii (wspólne osie)
+const chartDomain = computed(() => {
+  const pts = allOffers.value
     .map((o) => ({
-      id: o.id,
       time: new Date(o.listedAt).getTime(),
       amount: o.amount,
     }))
-    .filter((p) => !Number.isNaN(p.time)),
-)
+    .filter((p) => !Number.isNaN(p.time))
 
-const chartDomain = computed(() => {
-  if (offerPoints.value.length === 0) return null
+  if (pts.length === 0) return null
 
-  const times = offerPoints.value.map((p) => p.time)
-  const amounts = offerPoints.value.map((p) => p.amount)
+  const times = pts.map((p) => p.time)
+  const amounts = pts.map((p) => p.amount)
 
   const minTime = Math.min(...times)
   const maxTime = Math.max(...times)
@@ -308,27 +396,51 @@ const scaleY = (a: number) => {
   return chartHeight - chartPaddingY - ((a - minAmount) / span) * (chartHeight - 2 * chartPaddingY)
 }
 
-const offerChartPath = computed(() => {
-  if (!chartDomain.value || offerPoints.value.length === 0) return ''
+// SERIE DLA WYKRESU LINIOWEGO
+interface LineSeriesView {
+  id: number
+  label: string
+  lineColor: string
+  pointColor: string
+  path: string
+  points: { id: number; x: number; y: number }[]
+}
 
-  const pts = [...offerPoints.value].sort((a, b) => a.time - b.time)
+const lineSeries = computed<LineSeriesView[]>(() => {
+  if (!chartDomain.value) return []
 
-  return pts
-    .map((p, idx) => {
-      const x = scaleX(p.time)
-      const y = scaleY(p.amount)
-      return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`
-    })
-    .join(' ')
+  return series.value.map((s) => {
+    const pts = s.offers
+      .map((o) => ({
+        id: o.id,
+        time: new Date(o.listedAt).getTime(),
+        amount: o.amount,
+      }))
+      .filter((p) => !Number.isNaN(p.time))
+      .sort((a, b) => a.time - b.time)
+
+    const path = pts
+      .map((p, idx) => {
+        const x = scaleX(p.time)
+        const y = scaleY(p.amount)
+        return `${idx === 0 ? 'M' : 'L'} ${x} ${y}`
+      })
+      .join(' ')
+
+    const points = pts.map((p) => ({ id: p.id, x: scaleX(p.time), y: scaleY(p.amount) }))
+
+    return {
+      id: s.id,
+      label: s.label,
+      lineColor: s.lineColor,
+      pointColor: s.pointColor,
+      path,
+      points,
+    }
+  })
 })
 
-const offerChartDots = computed(() => {
-  if (!chartDomain.value || offerPoints.value.length === 0) return []
-
-  const pts = [...offerPoints.value].sort((a, b) => a.time - b.time)
-  return pts.map((p) => ({ id: p.id, x: scaleX(p.time), y: scaleY(p.amount) }))
-})
-
+// OŚ X/Y dla wykresu liniowego (na bazie chartDomain jak wcześniej)
 const xTicks = computed(() => {
   if (!chartDomain.value) return []
   const { minTime, maxTime } = chartDomain.value
@@ -368,8 +480,52 @@ const yTicks = computed(() => {
   return ticks
 })
 
+// WYKRES SŁUPKOWY – ILOŚĆ OFERT PER SERIA
+const barData = computed(() =>
+  series.value.map((s) => ({
+    label: s.label,
+    count: s.offers.length,
+    color: s.lineColor,
+  })),
+)
+
+const barChartDomain = computed(() => {
+  if (barData.value.length === 0) return null
+  const maxCount = Math.max(...barData.value.map((b) => b.count))
+  return { maxCount }
+})
+
+const barScaleX = (index: number, total: number) => {
+  if (total === 0) return chartPaddingX
+  const plotWidth = chartWidth - 2 * chartPaddingX
+  const barWidth = plotWidth / Math.max(total, 1)
+  return chartPaddingX + index * barWidth + barWidth / 2
+}
+
+const barScaleY = (count: number) => {
+  if (!barChartDomain.value) return chartHeight - chartPaddingY
+  const { maxCount } = barChartDomain.value
+  const span = maxCount || 1
+  return chartHeight - chartPaddingY - (count / span) * (chartHeight - 2 * chartPaddingY)
+}
+
+const barYTicks = computed(() => {
+  if (!barChartDomain.value) return []
+  const { maxCount } = barChartDomain.value
+  const span = maxCount || 1
+  const count = 4
+  const tickInterval = span / count
+
+  const ticks: { y: number; label: string }[] = []
+  for (let i = 0; i <= count; i++) {
+    const v = Math.round(tickInterval * i)
+    ticks.push({ y: barScaleY(v), label: String(v) })
+  }
+  return ticks
+})
+
 const displayDateRange = computed(() => {
-  if (offers.value.length === 0) {
+  if (allOffers.value.length === 0) {
     return { from: null as string | null, to: null as string | null }
   }
 
@@ -382,7 +538,7 @@ const displayDateRange = computed(() => {
     return { from: fromUi, to: toUi }
   }
 
-  const times = offers.value
+  const times = allOffers.value
     .map((o) => new Date(o.listedAt).getTime())
     .filter((t) => !Number.isNaN(t))
 
@@ -421,12 +577,38 @@ function formatOfferDate(iso: string): string {
 
   return `${day}.${month}.${year} ${hours}:${minutes}`
 }
+
+function removeSeries(id: number) {
+  // usuń serię o podanym id
+  series.value = series.value.filter((s) => s.id !== id)
+
+  // jeżeli zaznaczona oferta należała do usuniętej serii, wyczyść zaznaczenie
+  if (selectedOfferId.value !== null) {
+    const stillExists = series.value.some((s) => s.offers.some((o) => o.id === selectedOfferId.value))
+    if (!stillExists) {
+      selectedOfferId.value = null
+    }
+  }
+
+  // aktualizacja widoczności akcji admina:
+  // - 0 serii: brak wyników, akcje nie mają sensu
+  // - 1 seria: przywracamy akcje admina
+  // - >1 serii: akcje ukryte (jak po dodaniu wielu serii)
+  if (series.value.length === 0) {
+    hasSearched.value = false
+    showAdminOfferActions.value = false
+  } else if (series.value.length === 1) {
+    showAdminOfferActions.value = true
+  } else {
+    showAdminOfferActions.value = false
+  }
+}
 </script>
 
 <template>
   <div class="w-full bg-white rounded-xl shadow-md p-4 sm:p-6 flex flex-col gap-6">
     <section class="print:hidden">
-      <h2 class="text-lg sm:text-xl font-semibold mb-4 text-slate-900">Offer - Search</h2>
+      <h2 class="text-lg sm:text-xl font-semibold mb-2 text-slate-900">Offer - Search</h2>
 
       <form @submit.prevent="handleSubmit" class="space-y-4">
         <div class="flex flex-col gap-2 max-w-md w-full">
@@ -492,7 +674,216 @@ function formatOfferDate(iso: string): string {
           </div>
         </div>
 
-        <div class="mt-2">
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            type="submit"
+            :disabled="!canSubmit || isLoadingOffers"
+            class="inline-flex justify-center items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {{ isLoadingOffers ? 'Searching...' : 'Search offers' }}
+          </button>
+
+          <button
+            type="button"
+            :disabled="!canSubmit || isLoadingOffers"
+            class="inline-flex items-center rounded border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+            @click="handleAddSeries"
+          >
+            Add series
+          </button>
+
+          <span v-if="series.length > 0" class="text-xs text-slate-500">
+            Series count: {{ series.length }}
+          </span>
+        </div>
+
+        <p v-if="submitError" class="text-sm text-red-600">{{ submitError }}</p>
+      </form>
+    </section>
+
+    <section>
+      <h3 class="text-lg font-semibold mb-3 text-slate-900">Search results</h3>
+
+      <div v-if="allOffers.length > 0" class="mb-4 overflow-x-auto">
+        <!-- nagłówek Bar chart + toggle config -->
+        <div class="flex items-center justify-between mb-2">
+          <span class="block text-sm font-medium text-slate-800">{{ barChartTitle }}</span>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 text-xs text-green-700 hover:text-green-900"
+            @click="isBarChartConfigVisible = !isBarChartConfigVisible"
+          >
+            <span class="underline">Bar chart configuration</span>
+            <span>{{ isBarChartConfigVisible ? '▲' : '▼' }}</span>
+          </button>
+        </div>
+
+        <!-- Bar chart configuration BEZ wyboru kolorów -->
+        <div
+          v-if="isBarChartConfigVisible"
+          class="mb-3 space-y-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+        >
+          <div class="flex flex-wrap gap-4 text-xs text-slate-700">
+            <div class="flex flex-col gap-1 min-w-[180px]">
+              <label for="offerBarChartTitle" class="font-medium">Chart title</label>
+              <input
+                id="offerBarChartTitle"
+                v-model="barChartTitle"
+                type="text"
+                class="w-full rounded border border-slate-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="np. Liczba ofert"
+              />
+            </div>
+            <div class="flex flex-col gap-1 min-w-[160px]">
+              <label for="offerBarXAxisLabel" class="font-medium">X-axis label</label>
+              <input
+                id="offerBarXAxisLabel"
+                v-model="barXAxisLabel"
+                type="text"
+                class="w-full rounded border border-slate-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="np. Karta"
+              />
+            </div>
+            <div class="flex flex-col gap-1 min-w-[160px]">
+              <label for="offerBarYAxisLabel" class="font-medium">Y-axis label</label>
+              <input
+                id="offerBarYAxisLabel"
+                v-model="barYAxisLabel"
+                type="text"
+                class="w-full rounded border border-slate-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="np. Liczba ofert"
+              />
+            </div>
+          </div>
+        </div>
+
+        <!-- wykres słupkowy -->
+        <div class="w-full overflow-x-auto mb-2">
+          <svg
+            :viewBox="`0 0 ${chartWidth} ${chartHeight}`"
+            class="w-full min-w-[320px] h-56 bg-slate-50 rounded-md border border-slate-200"
+          >
+            <!-- siatka pozioma -->
+            <g stroke="#e5e7eb" stroke-width="1">
+              <line
+                v-for="(tick, idx) in barYTicks"
+                :key="'bar-y-grid-' + idx"
+                :x1="chartPaddingX"
+                :x2="chartWidth - chartPaddingX"
+                :y1="tick.y"
+                :y2="tick.y"
+                stroke-dasharray="2 2"
+              />
+            </g>
+
+            <!-- osie -->
+            <line
+              :x1="chartPaddingX"
+              :x2="chartWidth - chartPaddingX"
+              :y1="chartHeight - chartPaddingY"
+              :y2="chartHeight - chartPaddingY"
+              stroke="#0f172a"
+              stroke-width="1.5"
+            />
+            <line
+              :x1="chartPaddingX"
+              :x2="chartPaddingX"
+              :y1="chartPaddingY"
+              :y2="chartHeight - chartPaddingY"
+              stroke="#0f172a"
+              stroke-width="1.5"
+            />
+
+            <!-- kreski na osi Y -->
+            <g stroke="#0f172a" stroke-width="1.2">
+              <line
+                v-for="(tick, idx) in barYTicks"
+                :key="'bar-y-tick-' + idx"
+                :x1="chartPaddingX - 4"
+                :x2="chartPaddingX"
+                :y1="tick.y"
+                :y2="tick.y"
+              />
+            </g>
+
+            <!-- podpis osi Y (używa barYAxisLabel) -->
+            <text
+              :x="chartPaddingX - 36"
+              :y="chartPaddingY + (chartHeight - 2 * chartPaddingY) / 2"
+              text-anchor="middle"
+              font-size="10"
+              :fill="barAxisLabelColor"
+              :transform="`rotate(-90, ${chartPaddingX - 36}, ${chartPaddingY + (chartHeight - 2 * chartPaddingY) / 2})`"
+            >
+              {{ barYAxisLabel }}
+            </text>
+
+            <!-- podpis osi X (używa barXAxisLabel) -->
+            <text
+              :x="chartPaddingX + (chartWidth - 2 * chartPaddingX) / 2"
+              :y="chartHeight - 4"
+              text-anchor="middle"
+              font-size="10"
+              :fill="barAxisLabelColor"
+            >
+              {{ barXAxisLabel }}
+            </text>
+
+            <!-- etykiety osi Y -->
+            <g v-for="(tick, idx) in barYTicks" :key="'bar-y-label-' + idx">
+              <text
+                :x="chartPaddingX - 6"
+                :y="tick.y + 4"
+                text-anchor="end"
+                font-size="10"
+                :fill="barAxisLabelColor"
+              >
+                {{ tick.label }}
+              </text>
+            </g>
+
+            <!-- słupki -->
+            <g v-if="barData.length > 0">
+              <rect
+                v-for="(b, idx) in barData"
+                :key="'bar-' + b.label"
+                :x="barScaleX(idx, barData.length) - ((chartWidth - 2 * chartPaddingX) / Math.max(barData.length, 1)) / 3"
+                :width="(chartWidth - 2 * chartPaddingX) / Math.max(barData.length, 1) / 1.5"
+                :y="barScaleY(b.count)"
+                :height="chartHeight - chartPaddingY - barScaleY(b.count)"
+                :fill="b.color"
+              />
+
+              <g v-for="(b, idx) in barData" :key="'bar-x-label-' + b.label">
+                <text
+                  :x="barScaleX(idx, barData.length)"
+                  :y="chartHeight - chartPaddingY + 12"
+                  text-anchor="middle"
+                  font-size="9"
+                  :fill="barAxisLabelColor"
+                >
+                  {{ b.label }}
+                </text>
+              </g>
+            </g>
+          </svg>
+        </div>
+
+        <!-- legenda wykresu słupkowego -->
+        <div class="flex flex-wrap gap-3 text-xs text-slate-700 mb-4">
+          <div
+            v-for="b in barData"
+            :key="'legend-bar-' + b.label"
+            class="inline-flex items-center gap-1"
+          >
+            <span class="inline-block w-3 h-3 rounded-sm" :style="{ backgroundColor: b.color }" />
+            <span>{{ b.label }} ({{ b.count }})</span>
+          </div>
+        </div>
+
+        <!-- wykres liniowy + info -->
+        <div class="mb-2 flex items-center justify-between">
+          <span class="block text-sm font-medium text-slate-800">{{ chartTitle }}</span>
           <button
             type="button"
             class="inline-flex items-center gap-1 text-xs text-blue-700 hover:text-blue-900"
@@ -503,40 +894,12 @@ function formatOfferDate(iso: string): string {
           </button>
         </div>
 
+        <!-- KONFIGURATOR WYKRESU LINIOWEGO Z PER-SERYJNYMI KOLORAMI -->
         <div
           v-if="isChartConfigVisible"
-          class="mt-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+          class="mb-3 space-y-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
         >
-          <div class="flex flex-wrap gap-4 text-xs text-slate-700">
-            <div class="flex items-center gap-2">
-              <label for="offerLineColor" class="font-medium">Line color:</label>
-              <input
-                id="offerLineColor"
-                v-model="lineColor"
-                type="color"
-                class="w-8 h-6 border border-slate-300 rounded cursor-pointer bg-white"
-              />
-            </div>
-            <div class="flex items-center gap-2">
-              <label for="offerPointColor" class="font-medium">Point color:</label>
-              <input
-                id="offerPointColor"
-                v-model="pointColor"
-                type="color"
-                class="w-8 h-6 border border-slate-300 rounded cursor-pointer bg-white"
-              />
-            </div>
-            <div class="flex items-center gap-2">
-              <label for="offerAxisLabelColor" class="font-medium">Axis label color:</label>
-              <input
-                id="offerAxisLabelColor"
-                v-model="axisLabelColor"
-                type="color"
-                class="w-8 h-6 border border-slate-300 rounded cursor-pointer bg-white"
-              />
-            </div>
-          </div>
-
+          <!-- globalne ustawienia opisu osi/tytułów -->
           <div class="flex flex-wrap gap-4 text-xs text-slate-700">
             <div class="flex flex-col gap-1 min-w-[180px]">
               <label for="offerChartTitle" class="font-medium">Chart title</label>
@@ -568,38 +931,71 @@ function formatOfferDate(iso: string): string {
                 placeholder="np. Cena"
               />
             </div>
+            <div class="flex items-center gap-2 mt-2">
+              <label for="offerAxisLabelColor" class="font-medium">Axis label color:</label>
+              <input
+                id="offerAxisLabelColor"
+                v-model="axisLabelColor"
+                type="color"
+                class="w-8 h-6 border border-slate-300 rounded cursor-pointer bg-white"
+              />
+            </div>
+          </div>
+
+          <!-- per-seryjna konfiguracja kolorów -->
+          <div class="border-t border-slate-200 pt-2 mt-1">
+            <p class="text-xs font-semibold text-slate-700 mb-1">Series colors</p>
+            <div
+              v-if="series.length > 0"
+              class="flex flex-col gap-2"
+            >
+              <div
+                v-for="s in series"
+                :key="'series-color-' + s.id"
+                class="flex flex-wrap items-center gap-3 text-xs text-slate-700"
+              >
+                <span class="min-w-[80px] font-medium truncate">{{ s.card.cardName }}</span>
+
+                <label class="flex items-center gap-1">
+                  <span>Line:</span>
+                  <input
+                    type="color"
+                    :value="s.lineColor"
+                    class="w-8 h-5 border border-slate-300 rounded cursor-pointer bg-white"
+                    @input="(e: Event) => {
+                      const target = e.target as HTMLInputElement
+                      s.lineColor = target.value
+                    }"
+                  />
+                </label>
+
+                <label class="flex items-center gap-1">
+                  <span>Point:</span>
+                  <input
+                    type="color"
+                    :value="s.pointColor"
+                    class="w-8 h-5 border border-slate-300 rounded cursor-pointer bg-white"
+                    @input="(e: Event) => {
+                      const target = e.target as HTMLInputElement
+                      s.pointColor = target.value
+                    }"
+                  />
+                </label>
+              </div>
+            </div>
+            <p v-else class="text-xs text-slate-500">No series added yet.</p>
           </div>
         </div>
 
-        <p v-if="submitError" class="text-sm text-red-600">{{ submitError }}</p>
-
-        <button
-          type="submit"
-          :disabled="!canSubmit || isLoadingOffers"
-          class="inline-flex justify-center items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors w-full sm:w-auto"
-        >
-          {{ isLoadingOffers ? 'Searching...' : 'Search offers' }}
-        </button>
-      </form>
-    </section>
-
-    <section>
-      <h3 class="text-lg font-semibold mb-3 text-slate-900">Search results</h3>
-
-      <div v-if="offers.length > 0" class="mb-4 overflow-x-auto">
-        <div class="mb-2">
-          <span class="block text-sm font-medium text-slate-800">{{ chartTitle }}</span>
-        </div>
-
         <div class="flex flex-col lg:flex-row gap-4 items-start">
-          <div class="text-xs text-slate-700 min-w-[180px] space-y-1 w-full lg:w-auto">
+          <div class="text-xs text-slate-700 min-w-[220px] space-y-1 w-full lg:w-auto">
             <p>
               <span class="font-semibold">Expansion name:</span>
               <span class="ml-1 break-all">{{ selectedExpansionName || '-' }}</span>
             </p>
             <p>
-              <span class="font-semibold">Card name:</span>
-              <span class="ml-1 break-all">{{ selectedCardName || '-' }}</span>
+              <span class="font-semibold">Series:</span>
+              <span class="ml-1 break-all">{{ series.map((s) => s.card.cardName).join(', ') || '-' }}</span>
             </p>
             <p class="flex flex-wrap gap-1">
               <span class="font-semibold">Data od:</span>
@@ -609,6 +1005,25 @@ function formatOfferDate(iso: string): string {
               <span class="font-semibold">Data do:</span>
               <span>{{ displayDateRange.to ?? '-' }}</span>
             </p>
+
+            <!-- legenda wykresu liniowego -->
+            <div class="mt-2 flex flex-wrap gap-2">
+              <div
+                v-for="s in lineSeries"
+                :key="'legend-line-' + s.id"
+                class="inline-flex items-center gap-1"
+              >
+                <span
+                  class="inline-block w-4 h-[2px] rounded-full"
+                  :style="{ backgroundColor: s.lineColor }"
+                />
+                <span
+                  class="inline-block w-2 h-2 rounded-full border"
+                  :style="{ backgroundColor: s.pointColor, borderColor: '#ffffff' }"
+                />
+                <span>{{ s.label }}</span>
+              </div>
+            </div>
           </div>
 
           <div class="flex-1 min-w-0">
@@ -617,6 +1032,7 @@ function formatOfferDate(iso: string): string {
                 :viewBox="`0 0 ${chartWidth} ${chartHeight}`"
                 class="w-full min-w-[320px] h-56 bg-slate-50 rounded-md border border-slate-200"
               >
+                <!-- siatka pozioma (Y) -->
                 <g stroke="#e5e7eb" stroke-width="1">
                   <line
                     v-for="(tick, idx) in yTicks"
@@ -629,6 +1045,7 @@ function formatOfferDate(iso: string): string {
                   />
                 </g>
 
+                <!-- siatka pionowa (X) -->
                 <g stroke="#e5e7eb" stroke-width="1">
                   <line
                     v-for="(tick, idx) in xTicks"
@@ -641,6 +1058,7 @@ function formatOfferDate(iso: string): string {
                   />
                 </g>
 
+                <!-- osie -->
                 <line
                   :x1="chartPaddingX"
                   :x2="chartWidth - chartPaddingX"
@@ -658,6 +1076,7 @@ function formatOfferDate(iso: string): string {
                   stroke-width="1.5"
                 />
 
+                <!-- kreski na osi Y -->
                 <g stroke="#0f172a" stroke-width="1.2">
                   <line
                     v-for="(tick, idx) in yTicks"
@@ -669,6 +1088,7 @@ function formatOfferDate(iso: string): string {
                   />
                 </g>
 
+                <!-- kreski na osi X -->
                 <g stroke="#0f172a" stroke-width="1.2">
                   <line
                     v-for="(tick, idx) in xTicks"
@@ -680,6 +1100,7 @@ function formatOfferDate(iso: string): string {
                   />
                 </g>
 
+                <!-- opis osi Y -->
                 <text
                   :x="chartPaddingX - 36"
                   :y="chartPaddingY + (chartHeight - 2 * chartPaddingY) / 2"
@@ -688,9 +1109,10 @@ function formatOfferDate(iso: string): string {
                   :fill="axisLabelColor"
                   :transform="`rotate(-90, ${chartPaddingX - 36}, ${chartPaddingY + (chartHeight - 2 * chartPaddingY) / 2})`"
                 >
-                  {{ yAxisLabel }} ({{ offers[0]?.currency ?? '' }})
+                  {{ yAxisLabel }} ({{ allOffers[0]?.currency ?? '' }})
                 </text>
 
+                <!-- opis osi X -->
                 <text
                   :x="chartPaddingX + (chartWidth - 2 * chartPaddingX) / 2"
                   :y="chartHeight - 4"
@@ -701,6 +1123,7 @@ function formatOfferDate(iso: string): string {
                   {{ xAxisLabel }}
                 </text>
 
+                <!-- etykiety osi Y -->
                 <g v-for="(tick, idx) in yTicks" :key="'y-label-' + idx">
                   <text
                     :x="chartPaddingX - 6"
@@ -713,6 +1136,7 @@ function formatOfferDate(iso: string): string {
                   </text>
                 </g>
 
+                <!-- etykiety osi X -->
                 <g v-for="(tick, idx) in xTicks" :key="'x-label-' + idx">
                   <text
                     :x="tick.x"
@@ -725,130 +1149,164 @@ function formatOfferDate(iso: string): string {
                   </text>
                 </g>
 
-                <path
-                  v-if="offerChartPath"
-                  :d="offerChartPath"
-                  :stroke="lineColor"
-                  stroke-width="2"
-                  fill="none"
-                />
+                <!-- ścieżki linii dla każdej serii -->
+                <g v-for="s in lineSeries" :key="'path-' + s.id">
+                  <path
+                    v-if="s.path && s.path.length > 0"
+                    :d="s.path"
+                    :stroke="s.lineColor"
+                    stroke-width="2"
+                    fill="none"
+                  />
+                </g>
 
-                <!-- wszystkie punkty -->
-                <circle
-                  v-for="(pt, idx) in offerChartDots"
-                  :key="idx"
-                  :cx="pt.x"
-                  :cy="pt.y"
-                  :r="selectedOfferId === pt.id ? 6 : 3"
-                  :fill="selectedOfferId === pt.id ? '#ef4444' : pointColor"
-                  :stroke="selectedOfferId === pt.id ? '#b91c1c' : 'white'"
-                  :stroke-width="selectedOfferId === pt.id ? 2 : 1"
-                />
+                <!-- punkty dla każdej serii -->
+                <g v-for="s in lineSeries" :key="'pts-' + s.id">
+                  <circle
+                    v-for="pt in s.points"
+                    :key="'pt-' + s.id + '-' + pt.id"
+                    :cx="pt.x"
+                    :cy="pt.y"
+                    :r="selectedOfferId === pt.id ? 6 : 3"
+                    :fill="selectedOfferId === pt.id ? '#ef4444' : s.pointColor"
+                    :stroke="selectedOfferId === pt.id ? '#b91c1c' : 'white'"
+                    :stroke-width="selectedOfferId === pt.id ? 2 : 1"
+                  />
+                </g>
               </svg>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Komunikaty o ładowaniu/błędach: ukrywamy przy wydruku, żeby nie zaśmiecały wydruku -->
+      <!-- komunikaty gdy brak serii / ładowanie / błąd -->
       <p v-if="isLoadingOffers" class="text-sm text-slate-500 print:hidden">Loading offers...</p>
       <p v-else-if="offersError" class="text-sm text-red-600 print:hidden">{{ offersError }}</p>
-      <p v-else-if="offers.length === 0" class="text-sm text-slate-500 print:hidden">
-        No offers to display. Select expansion, card and run search.
+      <p v-else-if="allOffers.length === 0" class="text-sm text-slate-500 print:hidden">
+        No offers to display. Select expansion, card and run search, then optionally add more series.
       </p>
 
-      <table
+      <!-- osobne tabele dla każdej serii -->
+      <div
         v-else
-        class="w-full border border-slate-200 text-sm mt-2"
+        class="space-y-6"
       >
-        <thead class="bg-slate-50">
-          <tr>
-            <th class="px-3 py-2 text-left font-medium text-slate-700 border-b border-slate-200">Listed at</th>
-            <th class="px-3 py-2 text-left font-medium text-slate-700 border-b border-slate-200">Amount</th>
-            <th class="px-3 py-2 text-left font-medium text-slate-700 border-b border-slate-200">Currency</th>
-            <th
-              v-if="isAdmin"
-              class="px-3 py-2 text-right font-medium text-slate-700 border-b border-slate-200 w-40 print:hidden"
-            >
-              Actions
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="offer in offers"
-            :key="offer.id"
-            class="odd:bg-white even:bg-slate-50 cursor-pointer hover:bg-blue-50"
-            :class="{ 'bg-blue-100': selectedOfferId === offer.id }"
-            @click="selectedOfferId = offer.id"
-          >
-            <td class="px-3 py-2 border-b border-slate-100 font-mono">{{ formatOfferDate(offer.listedAt) }}</td>
-            <td class="px-3 py-2 border-b border-slate-100 text-right">
-              <template v-if="isAdmin && editingOfferId === offer.id">
-                <input
-                  v-model="editOfferAmount"
-                  type="text"
-                  class="w-24 rounded border border-slate-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  @keyup.enter="handleSaveOffer(offer)"
-                />
-              </template>
-              <template v-else>
-                <span class="font-mono">{{ offer.amount.toFixed(2) }}</span>
-              </template>
-            </td>
-            <td class="px-3 py-2 border-b border-slate-100">
-              {{ offer.currency }}
-            </td>
-            <td
-              v-if="isAdmin"
-              class="px-3 py-2 border-b border-slate-100 text-right space-x-2 print:hidden"
-              @click.stop
-            >
-              <template v-if="editingOfferId === offer.id">
-                <button
-                  type="button"
-                  class="inline-flex items-center rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                  :disabled="isSavingEditOffer"
-                  @click="handleSaveOffer(offer)"
+        <div
+          v-for="s in series"
+          :key="'table-' + s.id"
+          class="border border-slate-200 rounded-md overflow-hidden"
+        >
+          <div class="px-3 py-2 bg-slate-100 border-b border-slate-200 flex items-center justify-between">
+            <span class="text-sm font-semibold text-slate-800">
+              Series: {{ s.card.cardName }} ({{ s.card.cardNumber }})
+            </span>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-500">
+                Offers: {{ s.offers.length }}
+              </span>
+              <button
+                v-if="series.length > 1"
+                type="button"
+                class="inline-flex items-center justify-center text-xs font-bold text-red-600 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1"
+                @click="removeSeries(s.id)"
+                title="Remove this series from view"
+              >
+                x
+              </button>
+            </div>
+          </div>
+
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="px-3 py-2 text-left font-medium text-slate-700 border-b border-slate-200">Listed at</th>
+                <th class="px-3 py-2 text-right font-medium text-slate-700 border-b border-slate-200">Price</th>
+                <th class="px-3 py-2 text-left font-medium text-slate-700 border-b border-slate-200">Currency</th>
+                <th
+                  v-if="isAdmin && showAdminOfferActions"
+                  class="px-3 py-2 text-right font-medium text-slate-700 border-b border-slate-200 w-40 print:hidden"
                 >
-                  Save
-                </button>
-                <button
-                  type="button"
-                  class="inline-flex items-center rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
-                  :disabled="isSavingEditOffer"
-                  @click="cancelEditOffer"
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="offer in s.offers"
+                :key="offer.id"
+                class="odd:bg-white even:bg-slate-50 cursor-pointer hover:bg-blue-50"
+                :class="{ 'bg-blue-100': selectedOfferId === offer.id }"
+                @click="selectedOfferId = offer.id"
+              >
+                <td class="px-3 py-2 border-b border-slate-100 font-mono">{{ formatOfferDate(offer.listedAt) }}</td>
+                <td class="px-3 py-2 border-b border-slate-100 text-right">
+                  <template v-if="isAdmin && showAdminOfferActions && editingOfferId === offer.id">
+                    <input
+                      v-model="editOfferAmount"
+                      type="text"
+                      class="w-24 rounded border border-slate-300 px-2 py-1 text-xs text-right focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      @keyup.enter="handleSaveOffer(offer)"
+                    />
+                  </template>
+                  <template v-else>
+                    <span class="font-mono inline-block min-w-[4rem] text-right">{{ offer.amount.toFixed(2) }}</span>
+                  </template>
+                </td>
+                <td class="px-3 py-2 border-b border-slate-100">
+                  {{ offer.currency }}
+                </td>
+                <td
+                  v-if="isAdmin && showAdminOfferActions"
+                  class="px-3 py-2 border-b border-slate-100 text-right space-x-2 print:hidden"
+                  @click.stop
                 >
-                  Cancel
-                </button>
-              </template>
-              <template v-else>
-                <button
-                  type="button"
-                  class="inline-flex items-center rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
-                  @click="startEditOffer(offer)"
-                >
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  class="inline-flex items-center rounded bg-red-600 px-2 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
-                  :disabled="deletingOfferId === offer.id"
-                  @click="handleDeleteOffer(offer)"
-                >
-                  Delete
-                </button>
-              </template>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+                  <template v-if="editingOfferId === offer.id">
+                    <button
+                      type="button"
+                      class="inline-flex items-center rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                      :disabled="isSavingEditOffer"
+                      @click="handleSaveOffer(offer)"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      class="inline-flex items-center rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                      :disabled="isSavingEditOffer"
+                      @click="cancelEditOffer"
+                    >
+                      Cancel
+                    </button>
+                  </template>
+                  <template v-else>
+                    <button
+                      type="button"
+                      class="inline-flex items-center rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                      @click="startEditOffer(offer)"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      class="inline-flex items-center rounded bg-red-600 px-2 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                      :disabled="deletingOfferId === offer.id"
+                      @click="handleDeleteOffer(offer)"
+                    >
+                      Delete
+                    </button>
+                  </template>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       <p v-if="editOfferError" class="text-xs text-red-600 mt-2 print:hidden">{{ editOfferError }}</p>
     </section>
 
     <section
-      v-if="isAdmin && selectedExpansionName && selectedCardName && hasSearched && !isLoadingOffers && !offersError"
+      v-if="isAdmin && showAdminOfferActions && selectedExpansionName && selectedCardName && hasSearched && !isLoadingOffers && !offersError"
       class="border-t border-slate-200 pt-3 mt-2 print:hidden"
     >
 
@@ -879,8 +1337,9 @@ function formatOfferDate(iso: string): string {
             id="newOfferCurrency"
             v-model="newOfferCurrency"
             type="text"
-            class="w-full rounded border border-slate-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            @keyup.enter="handleAddOffer"
+            class="w-full rounded border border-slate-300 px-2 py-1 text-sm bg-slate-100 text-slate-500 cursor-not-allowed"
+            readonly
+            disabled
           />
         </div>
 
