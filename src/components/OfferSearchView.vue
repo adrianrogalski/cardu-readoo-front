@@ -706,7 +706,7 @@ function removeSeries(id: number) {
 
       <div v-if="allOffers.length > 0" class="mb-4 overflow-x-auto">
         <!-- nagłówek Bar chart + toggle config -->
-        <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center justify-between mb-2 print:hidden">
           <span class="block text-sm font-medium text-slate-800">{{ barChartTitle }}</span>
           <button
             type="button"
@@ -721,7 +721,7 @@ function removeSeries(id: number) {
         <!-- Bar chart configuration BEZ wyboru kolorów -->
         <div
           v-if="isBarChartConfigVisible"
-          class="mb-3 space-y-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+          class="mb-3 space-y-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 print:hidden"
         >
           <div class="flex flex-wrap gap-4 text-xs text-slate-700">
             <div class="flex flex-col gap-1 min-w-[180px]">
@@ -876,13 +876,16 @@ function removeSeries(id: number) {
             :key="'legend-bar-' + b.label"
             class="inline-flex items-center gap-1"
           >
-            <span class="inline-block w-3 h-3 rounded-sm" :style="{ backgroundColor: b.color }" />
+            <span
+              class="inline-block w-3 h-3 rounded-sm"
+              :style="{ backgroundColor: b.color }"
+            />
             <span>{{ b.label }} ({{ b.count }})</span>
           </div>
         </div>
 
         <!-- wykres liniowy + info -->
-        <div class="mb-2 flex items-center justify-between">
+        <div class="mb-2 flex items-center justify-between print:hidden">
           <span class="block text-sm font-medium text-slate-800">{{ chartTitle }}</span>
           <button
             type="button"
@@ -897,7 +900,7 @@ function removeSeries(id: number) {
         <!-- KONFIGURATOR WYKRESU LINIOWEGO Z PER-SERYJNYMI KOLORAMI -->
         <div
           v-if="isChartConfigVisible"
-          class="mb-3 space-y-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+          class="mb-3 space-y-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 print:hidden"
         >
           <!-- globalne ustawienia opisu osi/tytułów -->
           <div class="flex flex-wrap gap-4 text-xs text-slate-700">
