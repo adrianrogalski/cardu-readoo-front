@@ -27,6 +27,9 @@ const isLoadingOffers = ref(false)
 const offersError = ref<string | null>(null)
 const offers = ref<OfferPointResponse[]>([])
 
+// zaznaczenie wybranej oferty (wiersz + punkt na wykresie)
+const selectedOfferId = ref<number | null>(null)
+
 const hasSearched = ref(false)
 
 const fromDate = ref<string | null>(null)
@@ -270,6 +273,7 @@ const chartPaddingY = 24
 const offerPoints = computed(() =>
   offers.value
     .map((o) => ({
+      id: o.id,
       time: new Date(o.listedAt).getTime(),
       amount: o.amount,
     }))
@@ -322,7 +326,7 @@ const offerChartDots = computed(() => {
   if (!chartDomain.value || offerPoints.value.length === 0) return []
 
   const pts = [...offerPoints.value].sort((a, b) => a.time - b.time)
-  return pts.map((p) => ({ x: scaleX(p.time), y: scaleY(p.amount) }))
+  return pts.map((p) => ({ id: p.id, x: scaleX(p.time), y: scaleY(p.amount) }))
 })
 
 const xTicks = computed(() => {
@@ -729,15 +733,16 @@ function formatOfferDate(iso: string): string {
                   fill="none"
                 />
 
+                <!-- wszystkie punkty -->
                 <circle
                   v-for="(pt, idx) in offerChartDots"
                   :key="idx"
                   :cx="pt.x"
                   :cy="pt.y"
-                  r="3"
-                  :fill="pointColor"
-                  stroke="white"
-                  stroke-width="1"
+                  :r="selectedOfferId === pt.id ? 6 : 3"
+                  :fill="selectedOfferId === pt.id ? '#ef4444' : pointColor"
+                  :stroke="selectedOfferId === pt.id ? '#b91c1c' : 'white'"
+                  :stroke-width="selectedOfferId === pt.id ? 2 : 1"
                 />
               </svg>
             </div>
@@ -773,7 +778,9 @@ function formatOfferDate(iso: string): string {
           <tr
             v-for="offer in offers"
             :key="offer.id"
-            class="odd:bg-white even:bg-slate-50"
+            class="odd:bg-white even:bg-slate-50 cursor-pointer hover:bg-blue-50"
+            :class="{ 'bg-blue-100': selectedOfferId === offer.id }"
+            @click="selectedOfferId = offer.id"
           >
             <td class="px-3 py-2 border-b border-slate-100 font-mono">{{ formatOfferDate(offer.listedAt) }}</td>
             <td class="px-3 py-2 border-b border-slate-100 text-right">
@@ -795,6 +802,7 @@ function formatOfferDate(iso: string): string {
             <td
               v-if="isAdmin"
               class="px-3 py-2 border-b border-slate-100 text-right space-x-2 print:hidden"
+              @click.stop
             >
               <template v-if="editingOfferId === offer.id">
                 <button
